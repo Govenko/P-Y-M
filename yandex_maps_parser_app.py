@@ -478,9 +478,30 @@ async def extract_current_org(page, query: str, city: str) -> YandexLead:
     name = clean_text(data.get("name")) or clean_text(title.split(",")[0])
     breadcrumbs = clean_text(data.get("breadcrumbs"))
     categories = [part.strip() for part in re.split(r"[·•>]", breadcrumbs) if part.strip()]
-    category_candidates = categories[2:] if len(categories) >= 3 else categories
+    # Убираем мусор из категорий: "Маршрут", "Исправить неточность" и т.д.
+    trash_words = ["Маршрут", "Исправить неточность", "Поделиться", "Написать отзыв"]
+    category_candidates = []
+    for cat in categories[2:] if len(categories) >= 3 else categories:
+        is_trash = False
+        for trash in trash_words:
+            if trash in cat:
+                is_trash = True
+                break
+        if not is_trash and cat:
+            category_candidates.append(cat)
+    
     category_candidates.extend(data.get("categoryLinks") or [])
-    category = "; ".join(unique(category_candidates, limit=5))
+    # Также фильтруем categoryLinks от мусора
+    cleaned_links = []
+    for link in category_candidates:
+        is_trash = False
+        for trash in trash_words:
+            if trash in link:
+                is_trash = True
+                break
+        if not is_trash and link:
+            cleaned_links.append(link)
+    category = "; ".join(unique(cleaned_links, limit=5))
 
     all_text = str(data.get("allText") or "")
     phone_candidates = list(data.get("phoneTexts") or [])
@@ -494,11 +515,19 @@ async def extract_current_org(page, query: str, city: str) -> YandexLead:
     instagram_links: list[str] = []
     youtube_links: list[str] = []
     other_socials: list[str] = []
+    
+    # Ссылки на Яндекс которые нужно игнорировать
+    yandex_domains = ["yandex.ru", "yandex.com", "ya.ru", "mapsyandex", "yandex.maps"]
+    
     for link in data.get("links") or []:
         href = clean_text(link.get("href"))
         if not href.startswith(("http://", "https://")):
             continue
-        domain = domain_of(href)
+        domain = domain_of(href).lower()
+        
+        # Пропускаем ссылки на сам Яндекс и технические страницы
+        if any(ya in domain for ya in yandex_domains):
+            continue
         
         # Распределяем ссылки по категориям
         if "t.me" in domain or "telegram.org" in domain or "telegram.me" in domain:
@@ -514,26 +543,49 @@ async def extract_current_org(page, query: str, city: str) -> YandexLead:
         elif any(part in domain for part in SOCIAL_DOMAINS):
             other_socials.append(href)
 
+    # Фильтруем изображения от JS-скриптов и мусора
+    def is_valid_image_url(url):
+        if not url:
+            return False
+        # Отсекаем технические скрипты и CSS
+        if '.js' in url or '.css' in url:
+            return False
+        if 'yastatic' in url and 'maps-front' in url:
+            return False
+        # Оставляем только картинки
+        image_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg']
+        if any(ext in url.lower() for ext in image_extensions):
+            return True
+        # Если ссылка содержит /i/ или /images/ и не скрипт
+        if '/i/' in url or '/images/' in url or 'avatars' in url or 'XXL_height' in url:
+            return True
+        return False
+    
     # Извлекаем изображения из карточки организации
     images_list = data.get("images") or []
+    valid_images = [img for img in images_list if is_valid_image_url(img)]
     
     # Отделяем логотип от остальных изображений
     logo_url = ""
     other_images = []
-    for img in images_list:
-        if 'logo' in img.lower() or 'XXL_height' not in img:
-            # Это может быть логотип
+    for img in valid_images:
+        if 'logo' in img.lower():
+            # Это точно логотип
             if not logo_url:
                 logo_url = img
             else:
                 other_images.append(img)
+        elif 'XXL_height' in img or 'sugoi' in img or 'avatars' in img:
+            # Это фото организации
+            other_images.append(img)
         else:
+            # Неизвестное изображение, добавляем в другие
             other_images.append(img)
     
-    # Если не нашли логотип, берем первое изображение
-    if not logo_url and images_list:
-        logo_url = images_list[0]
-        other_images = images_list[1:]
+    # Если не нашли логотип, берем первое изображение (если оно не мусор)
+    if not logo_url and valid_images:
+        logo_url = valid_images[0]
+        other_images = valid_images[1:]
     
     return YandexLead(
         name=name,

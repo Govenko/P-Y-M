@@ -1,26 +1,12 @@
 ```
 # Chrome profile data
-tools/yandex_maps_chrome_profile/
-
-# Generated result files
-results/yandex_maps/
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Logs
-*.log
-
-# Environment files
-.env
-.env.local
-*.env.*
-
-# Dependencies (if any Python packages are installed)
-venv/
-.venv/
-.env/
+tools/yandex_maps_chrome_profile/Default/Cache/
+tools/yandex_maps_chrome_profile/Default/Cookies
+tools/yandex_maps_chrome_profile/Default/DawnGraphiteCache/
+tools/yandex_maps_chrome_profile/Default/DawnWebGPUCache/
+tools/yandex_maps_chrome_profile/Default/GPUCache/
+tools/yandex_maps_chrome_profile/Default/Local*
+tools/yandex_maps_chrome_profile/Default/Session*
+tools/yandex_maps_chrome_profile/Default/shared_proto_db/
+tools/yandex_maps_chrome_profile/Variations
 ```
