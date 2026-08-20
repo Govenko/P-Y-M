@@ -110,10 +110,18 @@ class YandexLead:
     address: str = ""
     phones: str = ""
     website: str = ""
-    social_links: str = ""
+    telegram: str = ""
+    whatsapp: str = ""
+    vk: str = ""
+    instagram: str = ""
+    youtube: str = ""
+    other_socials: str = ""
     rating: str = ""
     reviews: str = ""
     working_status: str = ""
+    working_hours: str = ""
+    logo: str = ""
+    images: str = ""
     yandex_url: str = ""
     source_query: str = ""
     source_city: str = ""
@@ -144,6 +152,11 @@ def find_chrome() -> Path:
         Path(os.environ.get("ProgramFiles", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
         Path(os.environ.get("ProgramFiles(x86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/google-chrome-stable"),
+        # Playwright Chromium fallback
+        Path("/root/.cache/ms-playwright/chromium-1117/chrome-linux/chrome"),
+        Path.home() / ".cache" / "ms-playwright" / "chromium-1117" / "chrome-linux" / "chrome",
     ]
     for path in candidates:
         if path.exists():
@@ -250,11 +263,27 @@ async def collect_org_links(page, max_results: int, log: Callable[[str], None]) 
 
     max_rounds = max(80, min(500, max_results * 3))
     for round_no in range(1, max_rounds):
+        # Пробуем разные селекторы для поиска карточек организаций
         found = await page.evaluate(
             """
-            () => Array.from(document.querySelectorAll('a[href*="/maps/org/"], a[href*="/org/"]'))
-              .map(a => a.href || '')
-              .filter(Boolean)
+            () => {
+              const selectors = [
+                'a[href*="/maps/org/"]',
+                'a[href*="/org/"]',
+                '.business-card-view a',
+                '.search-list-item a',
+                '[data-id] a[href*="/maps/"]',
+                '.ymaps-bizcard a'
+              ];
+              const results = [];
+              selectors.forEach(sel => {
+                document.querySelectorAll(sel).forEach(a => {
+                  const href = a.href || '';
+                  if (href) results.push(href);
+                });
+              });
+              return results;
+            }
             """
         )
         for href in found:
@@ -313,37 +342,132 @@ async def extract_current_org(page, query: str, city: str) -> YandexLead:
             .map(e => (e.innerText || e.textContent || '').trim())
             .filter(Boolean)
             .slice(0, 8);
+          
+          // Извлекаем полный график работы по дням недели
+          let workingHours = '';
+          const scheduleRows = document.querySelectorAll(
+            '[class*="schedule"] tr, ' +
+            '[class*="working-hours"] tr, ' +
+            '.business-schedule-view__row, ' +
+            '.business-schedule-view__table tr, ' +
+            '[class*="schedule-table"] tr, ' +
+            '.orgpage-schedule-view__row'
+          );
+          if (scheduleRows.length > 0) {
+            const hoursParts = [];
+            scheduleRows.forEach(row => {
+              const text = row.innerText || row.textContent || '';
+              if (text.trim()) hoursParts.push(text.trim());
+            });
+            workingHours = hoursParts.join('; ');
+          } else {
+            // Альтернативные селекторы для графика - блочный формат
+            const scheduleBlock = pick([
+              '.business-schedule-view',
+              '[class*="working-hours"]',
+              '[class*="schedule-block"]',
+              '.orgpage-schedule-view',
+              '[class*="hours-list"]'
+            ]);
+            if (scheduleBlock) workingHours = scheduleBlock;
+          }
+          
+          // Если график не найден, пробуем найти по отдельным элементам дней
+          if (!workingHours) {
+            const days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+            const dayElements = document.querySelectorAll('[class*="day"], [class*="weekday"]');
+            if (dayElements.length > 0) {
+              const hoursParts = [];
+              dayElements.forEach(el => {
+                const text = el.innerText || el.textContent || '';
+                if (text.trim() && days.some(d => text.toLowerCase().includes(d))) {
+                  hoursParts.push(text.trim());
+                }
+              });
+              if (hoursParts.length > 0) workingHours = hoursParts.join('; ');
+            }
+          }
+          
+          // Извлекаем изображения (логотип и фото организации)
+          const images = [];
+          const logoImages = document.querySelectorAll(
+            '.business-card-logo-view__image img, ' +
+            '.orgpage-header-view__logo img, ' +
+            '.business-header-view__logo img, ' +
+            '[class*="logo"] img, ' +
+            'img[class*="logo"]'
+          );
+          logoImages.forEach(img => {
+            const src = img.dataset.imageUrl || img.src || '';
+            if (src && !images.includes(src)) images.push(src);
+          });
+          
+          // Собираем все изображения из галереи
+          const galleryImages = document.querySelectorAll(
+            '.business-gallery-view__item img, ' +
+            '[class*="gallery"] img, ' +
+            '.orgpage-photos-view__photo img, ' +
+            '.business-photos-view__photo img, ' +
+            '[data-image-url], ' +
+            'img[src*="/maps/"], ' +
+            '.business-card-carousel__image img, ' +
+            '[class*="carousel"] img, ' +
+            '[class*="photo-item"] img'
+          );
+          galleryImages.forEach(img => {
+            const src = img.dataset.imageUrl || img.src || '';
+            if (src && !images.includes(src)) images.push(src);
+          });
+          
+          // Также пробуем найти изображения через data-атрибуты
+          const dataImages = document.querySelectorAll('[data-image-url], [data-src], [data-lazy-src]');
+          dataImages.forEach(el => {
+            const src = el.dataset.imageUrl || el.dataset.src || el.dataset.lazySrc || '';
+            if (src && !images.includes(src)) images.push(src);
+          });
+          
           return {
             title: document.title || '',
             pageUrl: location.href,
             name: pick([
               '.orgpage-header-view__title',
               '.business-card-title-view__title',
+              '.business-header-view__title',
               'h1'
             ]),
             breadcrumbs: pick(['.business-card-view__breadcrumbs']),
             address: pick([
               '.orgpage-header-view__address',
               '.business-contacts-view__address',
-              'a[href*="/house/"]'
+              'a[href*="/house/"]',
+              '.business-address-view'
             ]),
             rating: pick([
               '.business-rating-badge-view__rating-text',
-              '.business-rating-badge-view__rating'
+              '.business-rating-badge-view__rating',
+              '.business-header-rating-view__rating'
             ]),
             reviews: pick([
               '.business-header-rating-view__text',
-              'a[href$="/reviews/"]'
+              'a[href$="/reviews/"]',
+              '[class*="reviews-count"]'
             ]),
             workingStatus: pick([
               '.business-working-status-view',
-              '.business-working-status-flip-view'
+              '.business-working-status-flip-view',
+              '[class*="working-status"]'
             ]),
-            phoneTexts: Array.from(document.querySelectorAll('.orgpage-phones-view__phone-number, [class*="phone-number"]'))
+            workingHours: workingHours,
+            phoneTexts: Array.from(document.querySelectorAll(
+              '.orgpage-phones-view__phone-number, ' +
+              '[class*="phone-number"], ' +
+              '[class*="phone"] a[href^="tel:"]'
+            ))
               .map(e => (e.innerText || e.textContent || '').trim())
               .filter(Boolean),
             categoryLinks,
             links,
+            images,
             allText: allText.slice(0, 5000)
           };
         }
@@ -364,30 +488,71 @@ async def extract_current_org(page, query: str, city: str) -> YandexLead:
     phones = "; ".join(unique(normalize_phone(phone) for phone in phone_candidates if phone))
 
     websites: list[str] = []
-    socials: list[str] = []
+    telegram_links: list[str] = []
+    whatsapp_links: list[str] = []
+    vk_links: list[str] = []
+    instagram_links: list[str] = []
+    youtube_links: list[str] = []
+    other_socials: list[str] = []
     for link in data.get("links") or []:
         href = clean_text(link.get("href"))
         if not href.startswith(("http://", "https://")):
             continue
         domain = domain_of(href)
-        if any(part in domain for part in SOCIAL_DOMAINS):
-            socials.append(href)
-            continue
-        if any(part in domain for part in BAD_SITE_DOMAINS):
-            continue
-        parsed = urllib.parse.urlsplit(href)
-        websites.append(urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "/", "", "")))
+        
+        # Распределяем ссылки по категориям
+        if "t.me" in domain or "telegram.org" in domain or "telegram.me" in domain:
+            telegram_links.append(href)
+        elif "wa.me" in domain or "whatsapp.com" in domain or "api.whatsapp.com" in domain:
+            whatsapp_links.append(href)
+        elif "vk.com" in domain or "vk.ru" in domain:
+            vk_links.append(href)
+        elif "instagram.com" in domain or "instagr.am" in domain:
+            instagram_links.append(href)
+        elif "youtube.com" in domain or "youtu.be" in domain:
+            youtube_links.append(href)
+        elif any(part in domain for part in SOCIAL_DOMAINS):
+            other_socials.append(href)
 
+    # Извлекаем изображения из карточки организации
+    images_list = data.get("images") or []
+    
+    # Отделяем логотип от остальных изображений
+    logo_url = ""
+    other_images = []
+    for img in images_list:
+        if 'logo' in img.lower() or 'XXL_height' not in img:
+            # Это может быть логотип
+            if not logo_url:
+                logo_url = img
+            else:
+                other_images.append(img)
+        else:
+            other_images.append(img)
+    
+    # Если не нашли логотип, берем первое изображение
+    if not logo_url and images_list:
+        logo_url = images_list[0]
+        other_images = images_list[1:]
+    
     return YandexLead(
         name=name,
         category=category,
         address=clean_text(data.get("address")),
         phones=phones,
         website="; ".join(unique(websites, limit=5)),
-        social_links="; ".join(unique(socials, limit=8)),
+        telegram="; ".join(unique(telegram_links, limit=3)),
+        whatsapp="; ".join(unique(whatsapp_links, limit=3)),
+        vk="; ".join(unique(vk_links, limit=3)),
+        instagram="; ".join(unique(instagram_links, limit=3)),
+        youtube="; ".join(unique(youtube_links, limit=3)),
+        other_socials="; ".join(unique(other_socials, limit=5)),
         rating=clean_text(data.get("rating")).replace("Рейтинг ", ""),
         reviews=clean_text(data.get("reviews")),
         working_status=clean_text(data.get("workingStatus")),
+        working_hours=clean_text(data.get("workingHours")),
+        logo=logo_url,
+        images="; ".join(unique(other_images, limit=20)),
         yandex_url=canonical_org_url(data.get("pageUrl") or page.url) or page.url,
         source_query=query,
         source_city=city,
@@ -460,6 +625,9 @@ async def scrape_yandex_maps(
                     log("Яндекс показал проверку. Решите ее в открытом Chrome, программа подождет 90 секунд.")
                     await page.wait_for_timeout(90_000)
 
+                # Даем время на загрузку результатов поиска
+                await page.wait_for_timeout(5000)
+                
                 remaining = max_results - len(leads)
                 org_links = await collect_org_links(page, max_results=remaining, log=log)
                 # Если запрос сразу открыл карточку организации, берем и ее.
@@ -534,20 +702,27 @@ def write_outputs(leads: list[YandexLead], output_dir: Path) -> dict[str, Path]:
     for lead in leads:
         ws.append([getattr(lead, field) for field in fields])
     widths = {
-        "A": 32,
-        "B": 24,
-        "C": 42,
-        "D": 24,
-        "E": 30,
-        "F": 34,
-        "G": 10,
-        "H": 18,
-        "I": 20,
-        "J": 46,
-        "K": 24,
-        "L": 18,
-        "M": 20,
-        "N": 60,
+        "A": 32,  # name
+        "B": 24,  # category
+        "C": 42,  # address
+        "D": 24,  # phones
+        "E": 30,  # website
+        "F": 28,  # telegram
+        "G": 28,  # whatsapp
+        "H": 28,  # vk
+        "I": 28,  # instagram
+        "J": 28,  # youtube
+        "K": 28,  # other_socials
+        "L": 10,  # rating
+        "M": 18,  # reviews
+        "N": 20,  # working_status
+        "O": 45,  # working_hours
+        "P": 60,  # images
+        "Q": 46,  # yandex_url
+        "R": 24,  # source_query
+        "S": 18,  # source_city
+        "T": 20,  # collected_at
+        "U": 60,  # raw_text
     }
     for col, width in widths.items():
         ws.column_dimensions[col].width = width

@@ -1,0 +1,26 @@
+```
+# Chrome profile data
+tools/yandex_maps_chrome_profile/
+
+# Generated result files
+results/yandex_maps/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Dependencies (if any Python packages are installed)
+venv/
+.venv/
+.env/
+```
